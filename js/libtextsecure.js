@@ -37999,8 +37999,12 @@ var TextSecureServer = (function() {
                 return res;
             });
         },
-        sendMessages: function(destination, messageArray, timestamp) {
+        sendMessages: function(destination, messageArray, timestamp, silent) {
             var jsonData = { messages: messageArray, timestamp: timestamp};
+
+            if (silent) {
+              jsonData.silent = true;
+            }
 
             return this.ajax({
                 call                : 'messages',
@@ -39269,7 +39273,7 @@ textsecure.MessageReceiver.prototype = {
 /*
  * vim: ts=4:sw=4:expandtab
  */
-function OutgoingMessage(server, timestamp, numbers, message, callback) {
+function OutgoingMessage(server, timestamp, numbers, message, silent, callback) {
     if (message instanceof textsecure.protobuf.DataMessage) {
         var content = new textsecure.protobuf.Content();
         content.dataMessage = message;
@@ -39280,6 +39284,7 @@ function OutgoingMessage(server, timestamp, numbers, message, callback) {
     this.numbers = numbers;
     this.message = message; // ContentMessage proto
     this.callback = callback;
+    this.silent = silent;
 
     this.numbersCompleted = 0;
     this.errors = [];
@@ -39362,7 +39367,7 @@ OutgoingMessage.prototype = {
     },
 
     transmitMessage: function(number, jsonData, timestamp) {
-        return this.server.sendMessages(number, jsonData, timestamp).catch(function(e) {
+        return this.server.sendMessages(number, jsonData, timestamp, this.silent).catch(function(e) {
             if (e.name === 'HTTPError' && (e.code !== 409 && e.code !== 410)) {
                 // 409 and 410 should bubble and be handled by doSendMessage
                 // 404 should throw UnregisteredUserError
@@ -39758,13 +39763,13 @@ MessageSender.prototype = {
             }.bind(this));
         }.bind(this));
     },
-    sendMessageProto: function(timestamp, numbers, message, callback) {
+    sendMessageProto: function(timestamp, numbers, message, callback, silent) {
         var rejections = textsecure.storage.get('signedKeyRotationRejected', 0);
         if (rejections > 5) {
             throw new textsecure.SignedPreKeyRotationError(numbers, message.toArrayBuffer(), timestamp);
         }
 
-        var outgoing = new OutgoingMessage(this.server, timestamp, numbers, message, callback);
+        var outgoing = new OutgoingMessage(this.server, timestamp, numbers, message, silent, callback);
 
         numbers.forEach(function(number) {
             this.queueJobForNumber(number, function() {
@@ -39785,14 +39790,14 @@ MessageSender.prototype = {
         }.bind(this));
     },
 
-    sendIndividualProto: function(number, proto, timestamp) {
+    sendIndividualProto: function(number, proto, timestamp, silent) {
         return new Promise(function(resolve, reject) {
             this.sendMessageProto(timestamp, [number], proto, function(res) {
                 if (res.errors.length > 0)
                     reject(res);
                 else
                     resolve(res);
-            });
+            }, silent);
         }.bind(this));
     },
 
@@ -39881,7 +39886,7 @@ MessageSender.prototype = {
         var contentMessage = new textsecure.protobuf.Content();
         contentMessage.receiptMessage = receiptMessage;
 
-        return this.sendIndividualProto(sender, contentMessage, Date.now());
+        return this.sendIndividualProto(sender, contentMessage, Date.now(), true /*silent*/);
     },
     syncReadMessages: function(reads) {
         var myNumber = textsecure.storage.user.getNumber();
